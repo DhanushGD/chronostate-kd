@@ -1,0 +1,160 @@
+{
+  "gpu": "Tesla T4",
+  "student": "Qwen/Qwen2.5-0.5B-Instruct",
+  "teacher": "Qwen/Qwen2.5-3B-Instruct",
+  "quality": {
+    "teacher": {
+      "gsm8k": 0.69,
+      "mbpp": 0.74
+    },
+    "base": {
+      "gsm8k": 0.27,
+      "mbpp": 0.4
+    },
+    "sft_reasoning": {
+      "gsm8k": 0.3
+    },
+    "kd_reasoning": {
+      "gsm8k": 0.33
+    },
+    "kd_code": {
+      "mbpp": 0.42
+    }
+  },
+  "gsm8k_format": {
+    "base": {
+      "n": 100,
+      "frac_with_####": 0.01,
+      "acc": 0.27
+    },
+    "sft_reasoning": {
+      "n": 100,
+      "frac_with_####": 0.99,
+      "acc": 0.3
+    },
+    "kd_reasoning": {
+      "n": 100,
+      "frac_with_####": 0.17,
+      "acc": 0.33
+    },
+    "teacher": {
+      "n": 100,
+      "frac_with_####": 0.39,
+      "acc": 0.69
+    }
+  },
+  "kd_vs_sft_gsm8k_delta_pts": 3.0,
+  "kd_pct_of_teacher": {
+    "gsm8k": 47.8,
+    "mbpp": 56.8
+  },
+  "jump": {
+    "p50_ms": 4.030457499965223,
+    "p95_ms": 4.23747600001434,
+    "mb": 35.192832,
+    "naive_p50_ms": 403.8200139999901,
+    "speedup": 100
+  },
+  "routing": {
+    "beta1": {
+      "beta": 1.0,
+      "turns": 240,
+      "accuracy": 0.9,
+      "followup_turns": 45,
+      "followup_accuracy": 0.4666666666666667,
+      "true_switches": 54,
+      "jumps": 84,
+      "unnecessary_jumps": 36,
+      "missed_switches": 6,
+      "jumps_per_conv": 2.1,
+      "latency_p50_ms": 53.33252199989147
+    },
+    "beta0.7": {
+      "beta": 0.7,
+      "turns": 240,
+      "accuracy": 0.9541666666666667,
+      "followup_turns": 45,
+      "followup_accuracy": 0.7555555555555555,
+      "true_switches": 54,
+      "jumps": 69,
+      "unnecessary_jumps": 18,
+      "missed_switches": 3,
+      "jumps_per_conv": 1.725,
+      "latency_p50_ms": 56.210230000033334
+    }
+  },
+  "serving": {
+    "reuse": {
+      "turns": 6,
+      "jumps": 2,
+      "jump_ms_mean": 4.071875999898111,
+      "router_ms_mean": 72.14056883329552,
+      "ttft_ms_mean": 153.38256433331784,
+      "ttft_ms_after_jump_mean": 90.6869089999418,
+      "decode_tok_s_mean": 7.899426757031285,
+      "gen_tokens_total": 1113,
+      "vram_peak_gb": 0.669285888,
+      "wall_s": 157.21271630900037
+    },
+    "recompute": {
+      "turns": 6,
+      "jumps": 2,
+      "jump_ms_mean": 10.341920500195556,
+      "router_ms_mean": 19.72610566675333,
+      "ttft_ms_mean": 200.29579100006836,
+      "ttft_ms_after_jump_mean": 273.3839085001364,
+      "decode_tok_s_mean": 10.282470393027817,
+      "gen_tokens_total": 1127,
+      "vram_peak_gb": 0.84344832,
+      "wall_s": 111.28038425499972
+    }
+  },
+  "kv_mode_agreement": {
+    "exact": [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ],
+    "similarity": [
+      1.0,
+      1.0,
+      0.9863013698630136,
+      0.948559670781893,
+      0.9693396226415094,
+      0.996309963099631
+    ]
+  },
+  "attn_decode_tok_s": {
+    "sdpa": 10.768614408170295,
+    "eager": 10.898706476038047
+  },
+  "training": {
+    "adapter-code": {
+      "steps": 69,
+      "seconds": 287.075745344162,
+      "final_ce": 0.7852743310587746,
+      "final_kl": 0.7629156538418361,
+      "adapter_mb": 35.237104,
+      "vram_peak_gb": 2.451342848
+    },
+    "adapter-reasoning": {
+      "steps": 94,
+      "seconds": 366.57369089126587,
+      "final_ce": 0.6556908388932546,
+      "final_kl": 0.6798215955495834,
+      "adapter_mb": 35.237104,
+      "vram_peak_gb": 2.45112832
+    },
+    "adapter-reasoning-sft": {
+      "steps": 94,
+      "seconds": 372.01714515686035,
+      "final_ce": 0.4764195829629898,
+      "final_kl": 0.0,
+      "adapter_mb": 35.237104,
+      "vram_peak_gb": 2.29595648
+    }
+  }
+}

@@ -12,7 +12,7 @@ Updated at the end of each step. The plan this follows is `ChronoState-KD Lite P
 | 2 | Distil 2 KD adapters + SFT ablation | 0.3 (est. 1.3) | ✅ 2026-10-23 | CE and KL fall in both KD runs · 3 adapters, 35 MB each |
 | 3 | Adapter store + weight jump benchmark | 0.2 | ✅ 2026-10-23 | p50 4.0 ms · p95 4.2 ms · identical output · 100× vs load_adapter |
 | 4 | Markov layer + hybrid router | CPU | ✅ 2026-10-23 | β=0.7 vs 1.0: unnecessary jumps 36→18, follow-up acc 0.47→0.76, acc 0.90→0.95 |
-| 5 | Eval, benchmarks, write-up | 0.7 | 🟡 engine + notebook ready, Colab run pending | — |
+| 5 | Eval, benchmarks, write-up | 0.5 | ✅ 2026-10-23 | KD 0.33 vs SFT 0.30 (GSM8K, n=100) · 0.67 GB · TTFT 91 vs 273 ms · 85 %-of-teacher target missed |
 
 Legend: ⬜ not started · 🟡 in progress · ✅ gate passed · ❌ gate failed (see entry)
 
@@ -365,3 +365,59 @@ python -m pytest tests/ -q      # 44 passed
 ```
 
 **Next:** Step 5.2 (you, Colab) — `notebooks/05_eval_and_bench.ipynb`, ~25 min. Then Step 5.3: write-up (README results, LinkedIn post) from `results/`.
+
+---
+
+## Step 5.2 — Phase 5 run on Colab (2026-10-23, T4, ~30 min GPU)
+
+**Outcome** — all rows measured; two targets missed and recorded as such
+
+| Metric | Result | Target | Verdict |
+| --- | --- | --- | --- |
+| GSM8K-100 exact match: base / SFT / **KD** / teacher | 0.27 / 0.30 / **0.33** / 0.69 | KD ≥ SFT + 2 pts | met numerically (+3), **not significant** at n = 100 (±5 pts) |
+| MBPP-50 pass@1: base / **KD** / teacher | 0.40 / **0.42** / 0.74 | — | +2 pts at n = 50: noise |
+| KD as % of teacher (GSM8K / MBPP) | 48 % / 57 % | ≥ 85 % | **missed** |
+| Adapter swap p50 / p95 (35 MB, in place) | 4.0 / 4.2 ms | p95 < 45 ms | met, 10× margin |
+| vs naive `load_adapter` + `set_adapter` | 404 ms → **100×** | — | — |
+| Routing β = 1 → 0.7: unnecessary jumps / follow-up accuracy | 36 → 18 / 0.47 → 0.76 | fewer, ≥ accuracy | met |
+| Router latency, bge-small on the T4 | 17–22 ms/turn steady state (first call 339 ms warm-up) | — | 4–5× the swap itself |
+| 6-turn session, 2 jumps: peak VRAM | **0.67 GB** (recompute 0.84 GB) | < 3 GB | met, 4× margin |
+| TTFT after a jump: KV reuse vs recompute (~900 cached tokens) | **91 vs 273 ms** | — | 3× |
+| Answer agreement reuse vs recompute | identical on the 2 turns before the first jump; after it 0/4 exact, similarity 0.95–0.99 | report | the k/v-LoRA approximation, measured |
+| Decode throughput SDPA / eager | 10.8 / 10.9 tok/s | SDPA ≥ eager | **no difference** at batch 1, ≤ 1k context |
+| Training time per adapter | 5–6 min | — | — |
+
+GSM8K format check (`####` reached within 320 new tokens): base 1 %, **SFT 99 %**, **KD 17 %**, teacher 39 %.
+
+**What the numbers mean**
+
+- *The serving claims hold with margin.* 4 ms swaps, < 1 GB for the whole stack, a router that removes half the needless swaps, and a 3× TTFT win from keeping the cache across a jump. These are the numbers for the post.
+- *KV reuse is an approximation and now we know its size.* Turns 1–2 (no jump yet) are bit-identical in both modes; from the first jump on, answers differ slightly (similarity 0.95–0.99) because the cached K/V of earlier turns carry the previous adapter's k/v deltas. Options for an exact system: drop `k_proj`/`v_proj` from the LoRA targets, or recompute only the turns since the last jump.
+- *The quality comparison is confounded by answer length.* KD learned the teacher's verbose, LaTeX-heavy style and 83 % of its GSM8K answers were cut off before `####`; its 0.33 comes mostly from the "last number in the text" fallback on truncated outputs, while SFT answers in the gold format every time. KD is therefore likely under-measured. A fair comparison needs more decode budget (see 5.2b below) and ideally n ≥ 500.
+- *85 % of teacher was never realistic at this scale*: 1.5k rows, 1 epoch, 256-token truncation (88 % of code answers cut), a 0.5B student against a 3B teacher. The target stays in the table as a miss; `configs/full.yaml` is the path to it.
+- *SDPA vs eager is a wash here* because batch-1 decoding of a 0.5B model with ≤ 1k context is dominated by weight loads and kernel launches, not attention. The spec's FlashAttention/PagedAttention line is about long-context, high-batch serving, which this POC does not exercise.
+- *Jump outliers:* steady-state 4.0–4.1 ms; two cold/first jumps at 8.4 and 16.6 ms (allocator warm-up on the first H2D of a session). p95 over 200 trials in Phase 3 remains the quoted number.
+
+**Artefacts:** `results/final_results.json`, `results/results_table.md`, `results/demo_transcript.md`; per-sample `eval_<variant>_<task>.jsonl` on Drive; `turn`, `quality`, `kv_mode_agreement`, `attn_throughput` events in `events.jsonl`.
+
+**Step 5.2b (optional, ~15 min T4) — fair GSM8K re-eval.** Re-run only the GSM8K eval for SFT / KD / teacher with `max_new_tokens=640` and report `frac_with_####` and accuracy again. If KD's `####` rate rises substantially and accuracy moves, that is the ablation number to lead with; if not, the current one stands. Either way the write-up states which decode budget was used.
+
+**Next:** Step 5.3 — write-up: README results section, `results/linkedin_post.md`.
+
+---
+
+## Step 5.3 — Write-up (2026-10-23, local)
+
+**What we did**
+
+- `README.md` rewritten: one-line claim, how-it-works diagram, component table, the full results table with targets and verdicts, an "honestly" section (serving holds with margin; KV reuse is a measured approximation; quality is small-scale and format-confounded; SDPA is a wash here; what the tests caught), prior-art credit, reproduce steps.
+- `results/linkedin_post.md`: a long and a short draft built only from numbers in `results/`, with the attachments listed in order. Includes the misses and the measured surprises on purpose: that is what makes the serving numbers credible to people who know the space.
+
+**Open items (optional, in priority order)**
+
+1. **Step 5.2b** — GSM8K re-eval for SFT / KD / teacher at `max_new_tokens=640` (~15 min T4). Decides whether the KD-vs-SFT line in the post can be stated more strongly; update README + post if it moves.
+2. Record the 30-second screen capture of the demo cell (notebook 05, section 5) or screenshot `results/demo_transcript.md`.
+3. Export the architecture diagram from the plan doc as the first image.
+4. Scale-up when GPU time allows: `configs/full.yaml` (7B → 1.5B, 5k rows, seq 512, ~10 GPU-h on a T4), 2 epochs; drop `k_proj`/`v_proj` from `lora.targets` if exact KV reuse is wanted; cast LoRA slots to fp16 to bank the half-size swap.
+
+**Budget actually used:** ≈ 1.7 GPU-hours across 5 T4 sessions + 1 CPU session (plan: 3.5 h).
