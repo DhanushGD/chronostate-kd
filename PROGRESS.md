@@ -10,8 +10,8 @@ Updated at the end of each step. The plan this follows is `ChronoState-KD Lite P
 | 0 | Repo scaffold + environment check | 0.5 | ✅ 2026-10-23 | T4 · SDPA mem-efficient on · NF4 ok · tokenizers identical |
 | 1 | Teacher top-k logit cache | 0.7 | ✅ 2026-10-23 | aligned (top-1 agree 0.76/0.83) · teacher GSM8K 69 % · MBPP 74 % |
 | 2 | Distil 2 KD adapters + SFT ablation | 0.3 (est. 1.3) | ✅ 2026-10-23 | CE and KL fall in both KD runs · 3 adapters, 35 MB each |
-| 3 | Adapter store + weight jump benchmark | 0.3 | 🟡 code + notebook ready, Colab run pending | — |
-| 4 | Markov layer + hybrid router | CPU | ⬜ | — |
+| 3 | Adapter store + weight jump benchmark | 0.2 | ✅ 2026-10-23 | p50 4.0 ms · p95 4.2 ms · identical output · 100× vs load_adapter |
+| 4 | Markov layer + hybrid router | CPU | 🟡 code + notebook ready, run pending | — |
 | 5 | Eval, benchmarks, write-up | 0.7 | ⬜ | — |
 
 Legend: ⬜ not started · 🟡 in progress · ✅ gate passed · ❌ gate failed (see entry)
@@ -248,3 +248,62 @@ python -m pytest tests/ -q      # 34 passed
 ```
 
 **Next:** Step 3.2 (you, Colab) — `notebooks/03_store_and_jump.ipynb`, ~15 min.
+
+---
+
+## Step 3.2 — Phase 3 run on Colab (2026-10-23, T4, ~10 min GPU)
+
+**Outcome** — gate passed
+
+| Check | Result |
+| --- | --- |
+| Live LoRA slots | 336 tensors, 8,798,208 params, 35.2 MB fp32; student + adapter = 0.49 GB VRAM |
+| Equivalence (fp32 store) vs independent cold `PeftModel.from_pretrained` | **3/3 identical**, 48 greedy tokens each (2 reasoning, 1 code prompt) |
+| CUDA memory allocated inside the jump loop | **0 bytes** on all 400 jumps |
+| Store load time | 0.17–0.23 s per adapter from local disk |
+
+| Swap path | Bytes | p50 | p95 | p99 | max | fetch / copy / sync (p50) | Throughput |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **In-place `copy_()`, fp32 pinned store** | 35.2 MB | **4.03 ms** | **4.24 ms** | 4.40 ms | 5.45 ms | 0.001 / 2.21 / 1.74 ms | 8.7 GB/s |
+| In-place `copy_()`, fp16 pinned store | 17.6 MB | 6.45 ms | 7.29 ms | 10.3 ms | 10.8 ms | 0.001 / 6.41 / 0.03 ms | 2.7 GB/s |
+| Naive `load_adapter` + `set_adapter`, local disk | 35.2 MB | 404 ms | — | — | 420 ms | — | — |
+
+Target p95 < 45 ms: **PASS with 10× margin**. Speed-up over the naive path: **100×** (fp32 store).
+
+**What the numbers mean**
+
+- 8.7 GB/s is close to what PCIe 3 x16 delivers in practice on Colab; the swap is DMA-bound, not code-bound. Fetch is a dict lookup (≈ 1 µs); in production a Redis GET + deserialise would add roughly 1–5 ms for 35 MB on localhost, still far under target.
+- The fp32 breakdown (`copy` 2.2 ms returns early, `sync` 1.7 ms absorbs the DMA) is the signature of asynchronous pinned transfers working as intended.
+- **Surprise, kept as measured:** the fp16 store is *slower* although it moves half the bytes. Its `sync` is ~0, i.e. the copies ran synchronously: a cross-dtype `copy_()` (fp16 host → fp32 device) cannot be a plain DMA, PyTorch converts on the way and that path leaves the async pinned fast lane. Rule for the write-up: **store dtype must equal the live-slot dtype.** To bank the fp16 saving one would cast the LoRA slots themselves to fp16 (then 17.6 MB same-dtype ≈ 2 ms); not needed at 4 ms, recorded as an option.
+- Base weights never change across a jump, so the KV cache of a running conversation stays valid; Phase 5 exercises that path end to end.
+
+**Artefacts:** `results/phase3_jump_benchmark.json`, `results/phase3_jump_latency.png`; 400 `jump` events + 2 `jump_benchmark` + `naive_swap_benchmark` in `events.jsonl`.
+
+**Next:** Step 4.1 — `chronostate/router.py`, `chronostate/routing_eval.py`, `notebooks/04_router.ipynb` (CPU).
+
+---
+
+## Step 4.1 — Phase 4 code: Markov router + routing eval (2026-10-23, local, CPU)
+
+**What we did**
+
+- `chronostate/router.py` — `HybridRouter`: `score_j = β·softmax(cos/τ)_j + (1−β)·T[prev, j]` over the `MarkovStateLayer` from Step 0.1; jump when argmax ≠ previous state; every decision is a `RouteDecision` record (raw cosines, semantic probabilities, prior, combined, chosen, jumped, latency) so routing can be audited from the log. `build_prototypes()` mean-pools L2-normalised embeddings of ~200 prompts per domain. `make_st_embedder()` wraps bge-small on CPU.
+- `chronostate/routing_eval.py` — synthetic benchmark: 40 conversations × 6 turns built from **held-out** prompts (CodeFeedback rows beyond the training set + MBPP prompts; GSM8K test 100–600), in runs of 2–4 turns per domain, with 30 % *follow-up* turns ("why?", "and if it were 5 instead?") whose label is the current topic. Metrics: accuracy, follow-up accuracy, jumps, **unnecessary jumps**, missed switches, jumps/conversation, router latency.
+- `tests/test_router.py` — 7 tests with a keyword embedder: prototype normalisation, β = 1 is purely semantic, a follow-up is resolved by the prior at β = 0.7 but coin-flipped at β = 1, strong evidence still overrides the prior, `T` learns online and survives `reset()`, generator invariants, and the end-to-end claim (β = 0.7 → fewer unnecessary jumps, higher follow-up accuracy, no extra missed switches). Suite: **41 passed**.
+- `notebooks/04_router.ipynb` (CPU) — pools → embedder/prototypes + cosine-gap diagnostics → β sweep {1.0, 0.9, 0.7, 0.5} → learned-`T` heatmap + one worked conversation side by side → accuracy-vs-jumps plot; saves `results/prototypes.pt` for Phase 5.
+- `configs/*.yaml` — new `router.cos_temperature: 0.05`.
+
+**Design bug found and fixed by the tests (worth telling in the write-up)**
+
+The first version normalised the cosine vector with min-max before mixing with the prior. With K = 2 domains min-max *always* yields {1, 0}, even for a 0.016 cosine gap on "why?", so β·1 beat (1−β)·prior on every turn and the Markov layer was silently inert. The β sweep would have "shown" the prior buys nothing. Replaced with `softmax(cos / 0.05)`: a near-tie maps to ≈ 0.5/0.5 and lets the prior decide; a gap ≥ 0.15 maps to ≈ 1/0 and overrides it. The temperature is the one new hyper-parameter; the notebook prints the held-out cosine-gap distribution so it can be sanity-checked against real bge-small numbers.
+
+**Why the eval is built this way**
+
+- *Held-out prompts for eval, training prompts for prototypes:* otherwise the semantic classifier is tested on the exact sentences that define its prototypes.
+- *Follow-up turns are the point:* a topic-carrying prompt is easy for any embedder; the Markov prior earns its place on turns that carry no topic. Reporting follow-up accuracy separately isolates that.
+- *Unnecessary jumps as a first-class metric:* each one costs a swap (4 ms, cheap) **and** a turn answered by the wrong adapter (expensive). It is the number that makes the case for the prior.
+- *T learned online during the sweep, per router:* the demo shows the matrix becoming stickier as it sees real conversations; the heatmap is the visual for the post.
+
+**Expected numbers (toy embedder, for orientation only):** β = 1 → accuracy ~0.86, follow-up ~0.44, unnecessary jumps 37/240; β = 0.7 → ~0.92, ~0.66, 25/240. bge-small should separate topic prompts far better than the keyword toy, so overall accuracy will be higher for both; the follow-up gap should remain.
+
+**Next:** Step 4.2 (you, CPU runtime or local) — `notebooks/04_router.ipynb`, ~10 min.

@@ -1,0 +1,98 @@
+{
+  "gpu": "Tesla T4",
+  "lora_params": 8798208,
+  "equivalence": [
+    {
+      "identical": true,
+      "first_diff_pos": null,
+      "len_jumped": 48,
+      "len_ref": 48,
+      "domain": "reasoning",
+      "prompt": "A train travels 60 km in 1.5 hours. What"
+    },
+    {
+      "identical": true,
+      "first_diff_pos": null,
+      "len_jumped": 48,
+      "len_ref": 48,
+      "domain": "code",
+      "prompt": "Write a Python function is_palindrome(s)"
+    },
+    {
+      "identical": true,
+      "first_diff_pos": null,
+      "len_jumped": 48,
+      "len_ref": 48,
+      "domain": "reasoning",
+      "prompt": "Maya has 3 boxes with 12 apples each and"
+    }
+  ],
+  "benchmark": {
+    "fp32": {
+      "tag": "fp32",
+      "trials": 200,
+      "mb_per_jump": 35.192832,
+      "p50_ms": 4.030457499965223,
+      "p95_ms": 4.23747600001434,
+      "p99_ms": 4.403297999999722,
+      "max_ms": 5.4471729999931995,
+      "mean_ms": 4.029732539998463,
+      "fetch_p50_ms": 0.000687000010657357,
+      "copy_p50_ms": 2.205906999989793,
+      "sync_p50_ms": 1.7424309999967136,
+      "gbps": 8.731721398948794,
+      "max_cuda_mem_delta": 0
+    },
+    "fp16": {
+      "tag": "fp16",
+      "trials": 200,
+      "mb_per_jump": 17.596416,
+      "p50_ms": 6.4498339999943255,
+      "p95_ms": 7.291534999978921,
+      "p99_ms": 10.315231999982188,
+      "max_ms": 10.763644999997268,
+      "mean_ms": 6.646929765001062,
+      "fetch_p50_ms": 0.0006895000126405648,
+      "copy_p50_ms": 6.40791449998801,
+      "sync_p50_ms": 0.03497899999160836,
+      "gbps": 2.728196725685573,
+      "max_cuda_mem_delta": 0
+    }
+  },
+  "naive_baseline_ms": {
+    "trials": 10,
+    "p50_ms": 403.8200139999901,
+    "min_ms": 395.15491399998837,
+    "max_ms": 420.2619719999916
+  },
+  "store_meta": {
+    "fp32": {
+      "code": {
+        "tensors": 336,
+        "mb": 35.192832,
+        "load_s": 0.22818188400003692,
+        "dtype": "torch.float32"
+      },
+      "reasoning": {
+        "tensors": 336,
+        "mb": 35.192832,
+        "load_s": 0.17101184900002409,
+        "dtype": "torch.float32"
+      }
+    },
+    "fp16": {
+      "code": {
+        "tensors": 336,
+        "mb": 17.596416,
+        "load_s": 0.20149972500001923,
+        "dtype": "torch.float16"
+      },
+      "reasoning": {
+        "tensors": 336,
+        "mb": 17.596416,
+        "load_s": 0.19312125400000468,
+        "dtype": "torch.float16"
+      }
+    }
+  }
+}

@@ -10,6 +10,7 @@ dist/
 *.safetensors
 *.bin
 *.pt
+!results/prototypes.pt
 drive_local/
 adapters/
 teacher_cache/
