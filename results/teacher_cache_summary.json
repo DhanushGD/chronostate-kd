@@ -1,0 +1,32 @@
+{
+  "code": {
+    "domain": "code",
+    "shards": 3,
+    "rows": 1101,
+    "mb": 108.242464
+  },
+  "reasoning": {
+    "domain": "reasoning",
+    "shards": 3,
+    "rows": 1500,
+    "mb": 147.46896
+  },
+  "datasets": {
+    "code": {
+      "n": 1101,
+      "mean_len": 245.2534059945504,
+      "max_len": 256,
+      "mean_response_tokens": 126.50317892824705,
+      "total_response_tokens": 139280,
+      "truncated_frac": 0.8810172570390554
+    },
+    "reasoning": {
+      "n": 1500,
+      "mean_len": 204.174,
+      "max_len": 256,
+      "mean_response_tokens": 110.28466666666667,
+      "total_response_tokens": 165427,
+      "truncated_frac": 0.24666666666666667
+    }
+  }
+}

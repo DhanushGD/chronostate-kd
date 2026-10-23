@@ -16,6 +16,7 @@ stores logits at the same positions, so no separate shift is needed there.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -34,18 +35,22 @@ class KDLossOutput:
 def kd_loss(
     student_logits: torch.Tensor,        # (B, T, V) any float dtype
     labels: torch.Tensor,                # (B, T)   long, IGNORE_INDEX on prompt/pad tokens
-    teacher_topk_values: torch.Tensor,   # (B, T, K) teacher logits (raw, un-softmaxed)
-    teacher_topk_indices: torch.Tensor,  # (B, T, K) long/int32 vocab ids
+    teacher_topk_values: Optional[torch.Tensor],   # (B, T, K) teacher logits (raw); None when alpha == 0
+    teacher_topk_indices: Optional[torch.Tensor],  # (B, T, K) long/int32 vocab ids; None when alpha == 0
     alpha: float = 0.7,
     tau: float = 2.0,
     shift: bool = True,
     ignore_index: int = IGNORE_INDEX,
 ) -> KDLossOutput:
+    use_kd = alpha > 0.0
+    if use_kd and (teacher_topk_values is None or teacher_topk_indices is None):
+        raise ValueError("alpha > 0 requires teacher top-k values and indices")
     if shift:
         student_logits = student_logits[:, :-1]
         labels = labels[:, 1:]
-        teacher_topk_values = teacher_topk_values[:, :-1]
-        teacher_topk_indices = teacher_topk_indices[:, :-1]
+        if use_kd:
+            teacher_topk_values = teacher_topk_values[:, :-1]
+            teacher_topk_indices = teacher_topk_indices[:, :-1]
 
     V = student_logits.size(-1)
     flat_logits = student_logits.reshape(-1, V).float()
@@ -55,7 +60,7 @@ def kd_loss(
     mask = labels.ne(ignore_index)
     n_tokens = int(mask.sum().item())
 
-    if alpha == 0.0 or n_tokens == 0:
+    if not use_kd or n_tokens == 0:
         zero = torch.zeros((), device=student_logits.device, dtype=ce.dtype)
         return KDLossOutput(loss=ce, ce=ce.detach(), kl=zero, n_tokens=n_tokens)
 

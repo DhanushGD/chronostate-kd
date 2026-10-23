@@ -8,8 +8,8 @@ Updated at the end of each step. The plan this follows is `ChronoState-KD Lite P
 | Phase | What | GPU-h | Status | Gate result |
 | --- | --- | --- | --- | --- |
 | 0 | Repo scaffold + environment check | 0.5 | ✅ 2026-10-23 | T4 · SDPA mem-efficient on · NF4 ok · tokenizers identical |
-| 1 | Teacher top-k logit cache | 0.7 | 🟡 code + notebook ready, Colab run pending | — |
-| 2 | Distil 2 KD adapters + SFT ablation | 1.3 | ⬜ | — |
+| 1 | Teacher top-k logit cache | 0.7 | ✅ 2026-10-23 | aligned (top-1 agree 0.76/0.83) · teacher GSM8K 69 % · MBPP 74 % |
+| 2 | Distil 2 KD adapters + SFT ablation | 1.3 | 🟡 trainer + notebook ready, Colab run pending | — |
 | 3 | Adapter store + weight jump benchmark | 0.3 | ⬜ | — |
 | 4 | Markov layer + hybrid router | CPU | ⬜ | — |
 | 5 | Eval, benchmarks, write-up | 0.7 | ⬜ | — |
@@ -119,3 +119,72 @@ python -m pytest tests/ -q      # 23 passed
 ```
 
 **Next:** Step 1.2 (you, Colab) — run `notebooks/01_teacher_cache.ipynb`, ~40 min. Report the two `verify:` lines, the two eval dicts, peak VRAM, wall time; download `results/teacher_eval.json` and `results/teacher_cache_summary.json` and commit.
+
+---
+
+## Step 1.2 — Phase 1 run on Colab (2026-10-23, T4, ~20 min GPU)
+
+**Outcome** — gate passed
+
+| Check | code | reasoning |
+| --- | --- | --- |
+| Rows saved to `data/<domain>.pt` | 1,101 (399 prompts > 240 tokens skipped) | 1,500 |
+| Mean length / response tokens | 245 / 127 | 204 / 110 |
+| Truncated at 256 | **88 %** | 25 % |
+| Shards (500 rows) | 3, 108 MB | 3, 147 MB |
+| Cache throughput | ~1,150–1,350 tok/s, ~95–110 s per shard | same |
+| `teacher_top1_agreement` (64 rows) | **0.759** | **0.832** |
+
+| Teacher baseline (Qwen2.5-3B-Instruct, NF4) | Score | Time |
+| --- | --- | --- |
+| GSM8K-100 exact match | **0.69** | 404 s |
+| MBPP-50 pass@1 | **0.74** | 64 s |
+
+Teacher load 92 s (2.06 GB); peak VRAM during caching 3.96 GB. Artefacts: `results/teacher_eval.json`, `results/teacher_cache_summary.json`, per-sample `eval_teacher_*.jsonl` on Drive.
+
+**What the numbers mean**
+
+- Agreement of 0.76 / 0.83 against chance of ~1/151k: the shards are aligned with the token ids Phase 2 will train on. The KL term is meaningful.
+- The teacher is not strong on GSM8K (69 %); the 85 %-of-teacher target therefore means ≥ 59 % for the KD reasoning adapter and ≥ 63 % on MBPP. Those are the bars for Phase 5.
+
+**Known limitation introduced here**
+
+- *Code truncation:* CodeFeedback answers are long; at `max_len 256` the student sees only the first ~125 response tokens of most code answers. This caps the code adapter's MBPP score and is identical for the KD and SFT runs, so the ablation is still fair. Scale-up fix: `max_len: 512` (already in `full.yaml`) or a short-answer code set such as `python_code_instructions_18k_alpaca`. Not re-run for the POC; GPU budget goes to the ablation instead.
+
+**Next:** Step 2.1 — KD trainer (`chronostate/train.py`) + `notebooks/02_distill.ipynb`.
+
+---
+
+## Step 2.1 — Phase 2 code: KD trainer (2026-10-23, local, no GPU)
+
+**What we did**
+
+- `chronostate/train.py`
+  - `TeacherCacheReader` — loads a domain's shards into CPU RAM (≤ 150 MB) and serves `(values, indices)` by dataset `row_id`, so batches can be shuffled freely while staying aligned with the cache.
+  - `Trainer.fit()` — explicit loop: deterministic epoch order from the config seed, fp16 autocast + `GradScaler`, gradient accumulation, grad-norm clipping, linear-warmup cosine LR, `kd_loss` per micro-batch, CE/KL/grad-norm/LR/tokens-per-s/VRAM logged every 10 steps to `events.jsonl`, adapter-only checkpoint every 50 steps via `CheckpointManager`, resume from the latest checkpoint (weights + step + LR; optimizer moments are *not* restored).
+  - `build_student()` — NF4 base + `prepare_model_for_kbit_training` (gradient checkpointing, non-reentrant) + LoRA r=16 on q/k/v/o/gate/up/down.
+  - `train_adapter()` — Colab entry point; skips a run whose final adapter already exists; writes `adapters/<run>/train_summary.json` with the full step history.
+- `kd_loss` now accepts `None` teacher tensors when α = 0 (found by the new trainer test: the SFT path was slicing a dummy 1-D tensor).
+- `tests/test_train.py` — 5 tests on a toy LM with the oracle teacher: cache reader row mapping across shards, schedule/order determinism, **a 6-step KD run where both loss and KL fall**, SFT mode with KL ≡ 0, and a kill-and-resume at step 2 that finishes at step 6. Suite: **29 passed**.
+- `notebooks/02_distill.ipynb` — trains `adapter-code`, `adapter-reasoning`, `adapter-reasoning-sft` in sequence (skips finished, resumes unfinished), plots CE and KL curves, smoke-tests base vs each adapter on one probe per domain, saves summaries.
+
+**Why**
+
+- *Explicit loop over HF `Trainer`:* three needs — per-batch teacher lookup by row id, adapter-only Drive checkpoints that resume mid-epoch, and separate CE/KL logging — are each awkward through Trainer callbacks and trivial in 120 lines.
+- *Identical everything between KD and SFT:* same `.pt` data file, same seed → same batch order, same steps, LR, LoRA config; only `kd.alpha` differs (enforced by `test_configs_load_and_differ_only_where_intended`). That is what makes the "KD vs SFT at equal steps" number credible.
+- *Adapter-only checkpoints:* the LoRA adapter is ~9 MB; the AdamW moments would be another ~18 MB per save to Drive. Not restoring them costs a few warm-up steps after a resume and nothing otherwise.
+- *fp16 + GradScaler:* Turing has no bf16; LoRA weights stay fp32 and matmuls run in fp16 under autocast, which is the standard QLoRA recipe on a T4.
+
+**Expected numbers (for sanity when reading the output)**
+
+- Steps: code 1,101 rows / 16 = 69; reasoning 1,500 / 16 = 94. ~15–20 s/step → 20–30 min per run.
+- KD runs: `ce` drops from ~1.5–2 to ~1.0–1.3; `kl` (τ²-scaled) drops from ~2–4 to under 1. Peak VRAM ~3–5 GB.
+- SFT run: lower `ce` than the KD reasoning run at the same step is *expected*: SFT optimises CE alone. The question Phase 5 answers is which one generalises to the GSM8K test set.
+
+**How it was verified**
+
+```
+python -m pytest tests/ -q      # 29 passed
+```
+
+**Next:** Step 2.2 (you, Colab) — `notebooks/02_distill.ipynb`, ~80 min total across the three runs; can be split over sessions.

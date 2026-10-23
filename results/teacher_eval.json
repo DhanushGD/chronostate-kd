@@ -1,0 +1,16 @@
+{
+  "model": "Qwen/Qwen2.5-3B-Instruct",
+  "variant": "teacher",
+  "gsm8k": {
+    "task": "gsm8k",
+    "n": 100,
+    "accuracy": 0.69,
+    "seconds": 403.89436173439026
+  },
+  "mbpp": {
+    "task": "mbpp",
+    "n": 50,
+    "pass_at_1": 0.74,
+    "seconds": 64.02308988571167
+  }
+}

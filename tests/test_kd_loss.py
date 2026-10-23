@@ -68,3 +68,12 @@ def test_accepts_fp16_and_int32_inputs():
     s, y, tv, ti, _ = _fake_batch()
     out = kd_loss(s.half(), y, tv.half(), ti.to(torch.int32))
     assert torch.isfinite(out.loss)
+
+
+def test_alpha_zero_accepts_none_teacher_and_alpha_pos_rejects_it():
+    s, y, _, _, _ = _fake_batch()
+    out = kd_loss(s, y, None, None, alpha=0.0)
+    assert torch.isclose(out.loss, out.ce)
+    import pytest
+    with pytest.raises(ValueError):
+        kd_loss(s, y, None, None, alpha=0.5)
