@@ -1,0 +1,73 @@
+{
+  "betas": {
+    "1.0": {
+      "beta": 1.0,
+      "turns": 240,
+      "accuracy": 0.9,
+      "followup_turns": 45,
+      "followup_accuracy": 0.4666666666666667,
+      "true_switches": 54,
+      "jumps": 84,
+      "unnecessary_jumps": 36,
+      "missed_switches": 6,
+      "jumps_per_conv": 2.1,
+      "latency_p50_ms": 53.33252199989147
+    },
+    "0.9": {
+      "beta": 0.9,
+      "turns": 240,
+      "accuracy": 0.9041666666666667,
+      "followup_turns": 45,
+      "followup_accuracy": 0.4888888888888889,
+      "true_switches": 54,
+      "jumps": 82,
+      "unnecessary_jumps": 34,
+      "missed_switches": 6,
+      "jumps_per_conv": 2.05,
+      "latency_p50_ms": 55.00033299995266
+    },
+    "0.7": {
+      "beta": 0.7,
+      "turns": 240,
+      "accuracy": 0.9541666666666667,
+      "followup_turns": 45,
+      "followup_accuracy": 0.7555555555555555,
+      "true_switches": 54,
+      "jumps": 69,
+      "unnecessary_jumps": 18,
+      "missed_switches": 3,
+      "jumps_per_conv": 1.725,
+      "latency_p50_ms": 56.210230000033334
+    },
+    "0.5": {
+      "beta": 0.5,
+      "turns": 240,
+      "accuracy": 0.9708333333333333,
+      "followup_turns": 45,
+      "followup_accuracy": 0.8666666666666667,
+      "true_switches": 54,
+      "jumps": 64,
+      "unnecessary_jumps": 12,
+      "missed_switches": 2,
+      "jumps_per_conv": 1.6,
+      "latency_p50_ms": 59.39569700001357
+    }
+  },
+  "transition_matrix_beta0.7": {
+    "code": {
+      "code": 0.7518614530563354,
+      "reasoning": 0.2481384426355362
+    },
+    "reasoning": {
+      "code": 0.381437748670578,
+      "reasoning": 0.6185621023178101
+    }
+  },
+  "pools": {
+    "code": 557,
+    "reasoning": 500
+  },
+  "cos_proto_proto": 0.8299016356468201,
+  "cos_temperature": 0.05,
+  "gate_pass": true
+}

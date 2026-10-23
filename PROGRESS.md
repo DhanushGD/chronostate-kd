@@ -11,8 +11,8 @@ Updated at the end of each step. The plan this follows is `ChronoState-KD Lite P
 | 1 | Teacher top-k logit cache | 0.7 | ✅ 2026-10-23 | aligned (top-1 agree 0.76/0.83) · teacher GSM8K 69 % · MBPP 74 % |
 | 2 | Distil 2 KD adapters + SFT ablation | 0.3 (est. 1.3) | ✅ 2026-10-23 | CE and KL fall in both KD runs · 3 adapters, 35 MB each |
 | 3 | Adapter store + weight jump benchmark | 0.2 | ✅ 2026-10-23 | p50 4.0 ms · p95 4.2 ms · identical output · 100× vs load_adapter |
-| 4 | Markov layer + hybrid router | CPU | 🟡 code + notebook ready, run pending | — |
-| 5 | Eval, benchmarks, write-up | 0.7 | ⬜ | — |
+| 4 | Markov layer + hybrid router | CPU | ✅ 2026-10-23 | β=0.7 vs 1.0: unnecessary jumps 36→18, follow-up acc 0.47→0.76, acc 0.90→0.95 |
+| 5 | Eval, benchmarks, write-up | 0.7 | 🟡 engine + notebook ready, Colab run pending | — |
 
 Legend: ⬜ not started · 🟡 in progress · ✅ gate passed · ❌ gate failed (see entry)
 
@@ -307,3 +307,61 @@ The first version normalised the cosine vector with min-max before mixing with t
 **Expected numbers (toy embedder, for orientation only):** β = 1 → accuracy ~0.86, follow-up ~0.44, unnecessary jumps 37/240; β = 0.7 → ~0.92, ~0.66, 25/240. bge-small should separate topic prompts far better than the keyword toy, so overall accuracy will be higher for both; the follow-up gap should remain.
 
 **Next:** Step 4.2 (you, CPU runtime or local) — `notebooks/04_router.ipynb`, ~10 min.
+
+---
+
+## Step 4.2 — Phase 4 run (2026-10-23, Colab CPU, ~5 min)
+
+**Outcome** — gate passed
+
+Pools: 557 held-out code prompts, 500 held-out GSM8K test questions. Prototypes from 200 training prompts per domain (134 s to embed on CPU). `cos(code_proto, reasoning_proto) = 0.83` (bge-small embeddings are anisotropic; what matters is the gap). Held-out cosine gap own-minus-other: code median +0.134 (min +0.018, 100 % positive), reasoning median +0.123 (min +0.014, 100 % positive); follow-ups |gap| median 0.030. So topic prompts are always separable and follow-ups carry ~no signal, as designed; `cos_temperature = 0.05` puts a 0.13 gap at ≈ 0.93/0.07 and a 0.03 gap at ≈ 0.65/0.35.
+
+240 turns, 45 follow-ups, 54 true switches:
+
+| β | accuracy | follow-up accuracy | jumps | unnecessary | missed | jumps / conv | router ms/turn (CPU) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1.0 (semantic only) | 0.900 | 0.467 | 84 | 36 | 6 | 2.10 | 53 |
+| 0.9 | 0.904 | 0.489 | 82 | 34 | 6 | 2.05 | 55 |
+| **0.7 (default)** | **0.954** | **0.756** | **69** | **18** | **3** | **1.73** | 56 |
+| 0.5 | 0.971 | 0.867 | 64 | 12 | 2 | 1.60 | 59 |
+
+Learned `T` at β = 0.7 after 240 turns: code→code 0.75, reasoning→reasoning 0.62 (less sticky than the 0.8 prior because the synthetic conversations switch every 2–4 turns; that is the EMA tracking the data).
+
+**What the numbers mean**
+
+- The Markov prior **halves unnecessary jumps** (36 → 18) and takes follow-up accuracy from a coin flip (0.47) to 0.76, while *reducing* missed switches (6 → 3). This is the isolated contribution of the Markov layer; everything else is identical between the two rows.
+- The worked conversation shows the mechanism: after "Write a python function…", the follow-up "what does that give?" has sem 0.38 for code; β = 1 jumps to reasoning (wrong, and an extra swap), β = 0.7 stays on code because prior = 0.82.
+- The sweep is monotone down to β = 0.5, which is better still on this set. β = 0.7 was fixed before seeing results and stays the default; β = 0.5 is reported as the better setting *on this synthetic distribution* (30 % follow-ups). Lower β trades toward stickiness, which would hurt on conversations that switch every turn.
+- **Router latency is the real cost, not the swap:** 53–59 ms/turn for bge-small on the Colab CPU vs 4 ms for the weight jump. Phase 5 runs the embedder on the GPU (expected ≈ 3–6 ms).
+
+**Artefacts:** `results/phase4_routing.json`, `results/prototypes.pt` (loaded by Phase 5), `results/phase4_transition_matrix.png`, `results/phase4_beta_sweep.png`; `routing_eval` events in `events.jsonl`.
+
+**Design correction carried into Phase 5.** The plan states that the KV cache stays valid across a jump because the base weights are frozen. That holds only if LoRA leaves `k_proj`/`v_proj` untouched; ours adapts them. After a jump the cached K/V of *earlier* turns were computed with the previous adapter's k/v deltas, so cache reuse is an approximation, not an identity. Phase 5 therefore implements both `kv_mode = "reuse"` and `"recompute"` and **measures** the difference (time-to-first-token saved vs. answer agreement) instead of asserting it. Two exact alternatives exist for a production system: exclude k/v from the LoRA targets, or recompute only the turns since the last jump.
+
+**Next:** Step 5.1 — `chronostate/engine.py`, `notebooks/05_eval_and_bench.ipynb`.
+
+---
+
+## Step 5.1 — Phase 5 code: serving engine + final evaluation (2026-10-23, local, CPU)
+
+**What we did**
+
+- `chronostate/engine.py` — `ChronoStateEngine`: per turn, route → (jump through the jumper if needed) → append the turn in ChatML **on token ids** → `generate()` with the conversation's `DynamicCache`. Two modes: `kv_mode="reuse"` keeps the cache across turns and jumps (prefills only the new tokens); `"recompute"` starts a fresh cache every turn (exact, full prefill). Measures TTFT separately from decode throughput, and logs a `turn` event with router ms, jump ms, cache length, TTFT, tokens/s and peak VRAM. `session_summary()` and `transcript_markdown()` produce the numbers and the demo file.
+- `tests/test_engine.py` — 3 tests with a fake tokenizer and a fake HF-style model that enforces the prefix invariant (`cache length ≤ input length`) and counts prefills: reuse mode prefills only the new user turn after the first, recompute mode prefills everything every turn, jumps are dispatched exactly on topic switches, the summary/transcript are right. Suite: **44 passed**.
+- `notebooks/05_eval_and_bench.ipynb` — (2) quality: base / SFT / KD on GSM8K-100 and base / KD on MBPP-50 with the Phase 1 harness, variants switched via the jumper, plus a `####`-reached check per variant; (3) 6-turn session with 2 topic switches in both kv modes, with per-turn TTFT and an answer-agreement comparison; (4) SDPA vs eager decode tok/s; (5) demo transcript; (6) `results/final_results.json` + `results/results_table.md` assembled from the Phase 1–5 artefacts.
+
+**Why**
+
+- *Ids, not text, as the conversation state:* re-tokenising generated text is not guaranteed to reproduce the generated ids, which would silently break the cache prefix. Keeping the id list and feeding the full ids plus the cache lets `transformers` prefill exactly the uncached tail.
+- *Reuse vs recompute, measured:* see the Step 4.2 correction. The honest claim is "reuse saves X ms of TTFT after a jump and the answers agree in N/6 turns (mean similarity S)", not "the cache stays valid".
+- *Variants via the jumper, base via `disable_adapter()`:* one loaded model for the whole eval; no reloads, and the eval itself exercises the swap path.
+- *`####` check:* separates "KD reasons worse" from "KD writes longer and ran out of tokens", which Phase 2's smoke test flagged as a risk.
+- *Embedder on GPU:* Phase 4 measured 55 ms/turn on CPU, 13× the swap; on the T4 it should be a few ms, making the router cost negligible next to generation.
+
+**How it was verified**
+
+```
+python -m pytest tests/ -q      # 44 passed
+```
+
+**Next:** Step 5.2 (you, Colab) — `notebooks/05_eval_and_bench.ipynb`, ~25 min. Then Step 5.3: write-up (README results, LinkedIn post) from `results/`.
