@@ -9,8 +9,8 @@ Updated at the end of each step. The plan this follows is `ChronoState-KD Lite P
 | --- | --- | --- | --- | --- |
 | 0 | Repo scaffold + environment check | 0.5 | ✅ 2026-10-23 | T4 · SDPA mem-efficient on · NF4 ok · tokenizers identical |
 | 1 | Teacher top-k logit cache | 0.7 | ✅ 2026-10-23 | aligned (top-1 agree 0.76/0.83) · teacher GSM8K 69 % · MBPP 74 % |
-| 2 | Distil 2 KD adapters + SFT ablation | 1.3 | 🟡 trainer + notebook ready, Colab run pending | — |
-| 3 | Adapter store + weight jump benchmark | 0.3 | ⬜ | — |
+| 2 | Distil 2 KD adapters + SFT ablation | 0.3 (est. 1.3) | ✅ 2026-10-23 | CE and KL fall in both KD runs · 3 adapters, 35 MB each |
+| 3 | Adapter store + weight jump benchmark | 0.3 | 🟡 code + notebook ready, Colab run pending | — |
 | 4 | Markov layer + hybrid router | CPU | ⬜ | — |
 | 5 | Eval, benchmarks, write-up | 0.7 | ⬜ | — |
 
@@ -188,3 +188,63 @@ python -m pytest tests/ -q      # 29 passed
 ```
 
 **Next:** Step 2.2 (you, Colab) — `notebooks/02_distill.ipynb`, ~80 min total across the three runs; can be split over sessions.
+
+---
+
+## Step 2.2 — Phase 2 run on Colab (2026-10-23, T4, ~18 min GPU)
+
+**Outcome** — gate passed
+
+| Run | Steps | Wall | CE step 1 → end | KL step 1 → end (τ²-scaled) | Final loss | Peak VRAM |
+| --- | --- | --- | --- | --- | --- | --- |
+| `adapter-code` (KD, α=0.7) | 69 | 4.8 min | 0.871 → **0.785** | 1.064 → **0.763** | 0.770 | 2.45 GB |
+| `adapter-reasoning` (KD, α=0.7) | 94 | 6.1 min | 0.824 → **0.656** | 1.256 → **0.680** | 0.673 | 2.45 GB |
+| `adapter-reasoning-sft` (α=0) | 94 | 6.2 min | 0.824 → **0.476** | 0 (by construction) | 0.476 | 2.30 GB |
+
+Trainable params 8,798,208 (1.75 % of 502.8 M). Throughput 800–990 tok/s. Adapter files 35.2 MB each (fp32). No resume needed.
+
+**What the numbers mean**
+
+- Both KD runs reduce CE *and* KL together: the student is moving toward the teacher's distribution without sacrificing fit to the labels. Curves are noisy (step-50 bumps in all three runs = the same hard batch, since the order is seeded) because 69–94 steps is short; the trend is clear.
+- SFT reaches a lower CE (0.48 vs 0.66) at equal steps, as predicted: it optimises CE only, with the full gradient budget. Lower training CE is not the question; Phase 5's GSM8K test accuracy is.
+- Smoke test: the SFT adapter answers in GSM8K gold style and gets the probe right (`#### 8`). The KD adapter answers in the **teacher's** verbose style (prose + LaTeX) and was still mid-answer at 80 tokens. This is the distillation working as intended, but it means KD answers are longer; Phase 5 decodes 320 tokens and must check that `####` is reached. If KD under-performs on exact match, answer length is the first suspect, not reasoning quality.
+
+**Corrections to earlier estimates**
+
+- Adapter size is **35 MB** (8.8 M params × fp32), not ~9 MB. Phase 3 therefore benchmarks both an fp32 store and an fp16 store (17.6 MB; cast happens on the GPU during `copy_`).
+- Training is ~4× faster than planned (short sequences, small model). GPU budget used so far ≈ 0.9 h of 3.5 h. Optional later: a second epoch or 3k rows per adapter costs ~15 min.
+
+**Artefacts:** `adapters/{adapter-code,adapter-reasoning,adapter-reasoning-sft}/` on Drive (safetensors + `train_summary.json` with the step history); `results/phase2_train_summary.json`, `results/phase2_loss_curves.png` in the repo; `train_step` events in `events.jsonl`.
+
+**Next:** Step 3.1 — `chronostate/store.py`, `chronostate/jump.py`, `notebooks/03_store_and_jump.ipynb`.
+
+---
+
+## Step 3.1 — Phase 3 code: adapter store + weight jump (2026-10-23, local, no GPU)
+
+**What we did**
+
+- `chronostate/store.py` — `AdapterStore`: loads each `adapter_model.safetensors` once into **pinned** host tensors keyed by adapter name; optional cast to fp16 (halves the bytes that cross PCIe; the cast back to the fp32 live slot happens inside `copy_()` on the GPU). `live_to_saved_key()` maps PEFT's live parameter names (`…lora_A.default.weight`) to the saved keys (`…lora_A.weight`). `check_same_schema()` guards against adapters trained with different ranks.
+- `chronostate/jump.py` — `WeightJumper`: collects the live LoRA tensors of the attached adapter once, asserts the key set and shapes match the store, and `jump(name)` does `dst.copy_(src, non_blocking=True)` per tensor followed by one `cuda.synchronize()`. Timing is split into fetch / copy / sync, and `cuda_mem_delta` is recorded per jump to prove nothing is allocated in the loop. `benchmark()` returns p50/p95/p99, per-phase medians and effective GB/s. `greedy_ids()` + `equivalence_report()` for the correctness check.
+- `tests/test_jump.py` — 5 CPU tests with a toy module that mirrors PEFT's naming: key mapping, store loading/casting, a jump that overwrites the slots **without moving their data pointers** and changes the output, schema-mismatch rejection, equivalence reporting. Suite: **34 passed**.
+- `notebooks/03_store_and_jump.ipynb` — load student + one adapter as the container → fp32 and fp16 stores → correctness vs an independent cold `PeftModel.from_pretrained` on 3 prompts (hard assert) → 200-jump benchmark per store → naive `load_adapter`/`set_adapter` baseline from local disk → histogram + JSON.
+
+**Why**
+
+- *Pinned memory:* a pageable H2D copy goes through a driver staging buffer; a pinned one is a single DMA. On a Colab T4 (PCIe 3 x16, ~12 GB/s nominal) 35 MB should move in ~3–6 ms, 17.6 MB in half that. This is where the "< 45 ms" target either holds or does not.
+- *Copy into existing slots instead of `load_adapter`:* no new modules, no new allocations, no change to the PEFT graph, and therefore no reason for the KV cache to be invalidated. The naive path is benchmarked alongside so the write-up quotes a measured speed-up, not a claimed one.
+- *Equivalence against an independent load:* a jump that is fast but wrong is worthless; identical greedy token ids on 3 prompts (fp32 store) is the cheapest convincing proof. The fp16 store is benchmarked but **not** used for the correctness assert, since a cast can flip a near-tie token.
+- *Baseline from local disk, not Drive:* otherwise the speed-up would mostly measure Drive latency.
+
+**Expected numbers**
+
+- fp32 store: p50 ~4–8 ms, p95 ~6–12 ms. fp16 store: roughly half. Fetch ≈ 0.01 ms, copy (launch of ~340 small copies) ~1–3 ms, sync carries the DMA.
+- Naive `load_adapter` + `set_adapter` from local disk: ~300–1500 ms → a 50–200× speed-up.
+
+**How it was verified**
+
+```
+python -m pytest tests/ -q      # 34 passed
+```
+
+**Next:** Step 3.2 (you, Colab) — `notebooks/03_store_and_jump.ipynb`, ~15 min.

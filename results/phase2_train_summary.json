@@ -1,0 +1,53 @@
+{
+  "adapter-code": {
+    "run_name": "adapter-code",
+    "domain": "code",
+    "config": "configs/lite.yaml",
+    "alpha": 0.7,
+    "tau": 2.0,
+    "rows": 1101,
+    "steps": 69,
+    "resumed_from": 0,
+    "final_loss": 0.7696232795715332,
+    "final_ce": 0.7852743310587746,
+    "final_kl": 0.7629156538418361,
+    "seconds": 287.075745344162,
+    "response_tokens_seen": 139280,
+    "adapter_mb": 35.237104,
+    "vram_peak_gb": 2.451342848
+  },
+  "adapter-reasoning": {
+    "run_name": "adapter-reasoning",
+    "domain": "reasoning",
+    "config": "configs/lite.yaml",
+    "alpha": 0.7,
+    "tau": 2.0,
+    "rows": 1500,
+    "steps": 94,
+    "resumed_from": 0,
+    "final_loss": 0.6725823680559794,
+    "final_ce": 0.6556908388932546,
+    "final_kl": 0.6798215955495834,
+    "seconds": 366.57369089126587,
+    "response_tokens_seen": 165427,
+    "adapter_mb": 35.237104,
+    "vram_peak_gb": 2.45112832
+  },
+  "adapter-reasoning-sft": {
+    "run_name": "adapter-reasoning-sft",
+    "domain": "reasoning",
+    "config": "configs/lite_sft.yaml",
+    "alpha": 0.0,
+    "tau": 2.0,
+    "rows": 1500,
+    "steps": 94,
+    "resumed_from": 0,
+    "final_loss": 0.4764195829629898,
+    "final_ce": 0.4764195829629898,
+    "final_kl": 0.0,
+    "seconds": 372.01714515686035,
+    "response_tokens_seen": 165427,
+    "adapter_mb": 35.237104,
+    "vram_peak_gb": 2.29595648
+  }
+}
