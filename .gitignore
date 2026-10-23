@@ -1,0 +1,32 @@
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# model/data artefacts live on Drive, never in git
+*.safetensors
+*.bin
+*.pt
+drive_local/
+adapters/
+teacher_cache/
+wandb/
+
+# notebooks: keep outputs out of git (Colab writes huge outputs)
+.ipynb_checkpoints/
+
+# results: commit JSON summaries and plots, not raw per-sample dumps larger than ~5 MB
+results/*.jsonl
+!results/events.jsonl
+!results/*.json
+!results/*.png
+
+# local
+.env
+.vscode/
+.idea/
+Thumbs.db
+*.pdf

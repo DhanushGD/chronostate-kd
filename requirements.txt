@@ -1,0 +1,16 @@
+# Unpinned on purpose: Colab ships its own torch/CUDA build and pinning against it breaks installs.
+# Phase 0 notebook runs `pip freeze > requirements.lock.txt` on the T4 after a successful install;
+# commit that lock file and use it for every later notebook.
+transformers
+peft
+bitsandbytes
+accelerate
+datasets
+safetensors
+sentence-transformers
+pyyaml
+numpy
+tqdm
+pytest
+wandb
+matplotlib

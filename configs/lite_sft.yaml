@@ -1,0 +1,73 @@
+# ChronoState-KD Lite SFT ablation: identical to lite.yaml except kd.alpha = 0.
+# Used for the "KD vs SFT at equal steps" comparison on the reasoning adapter.
+
+models:
+  teacher: Qwen/Qwen2.5-3B-Instruct
+  student: Qwen/Qwen2.5-0.5B-Instruct
+  router_embedder: BAAI/bge-small-en-v1.5
+  attn_implementation: sdpa          # FA2 needs Ampere; T4 (Turing) uses the mem-efficient SDPA kernel
+  compute_dtype: float16             # no bf16 on Turing
+
+quant:                               # bitsandbytes, both teacher and student
+  load_in_4bit: true
+  quant_type: nf4
+  double_quant: true
+
+kd:
+  alpha: 0.0                         # ABLATION: plain SFT, no KL term. Everything else identical to lite.yaml
+  tau: 2.0
+  top_k: 64                          # teacher logits kept per token
+
+lora:
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+data:
+  max_len: 256
+  rows_per_adapter: 1500
+  seed: 42
+  domains:
+    code:
+      dataset: m-a-p/CodeFeedback-Filtered-Instruction
+      split: train
+      filter_language: python
+    reasoning:
+      dataset: openai/gsm8k
+      config: main
+      split: train
+
+train:
+  batch_size: 2
+  grad_accum: 8
+  lr: 2.0e-4
+  epochs: 1
+  warmup_ratio: 0.03
+  scheduler: cosine
+  fp16: true
+  gradient_checkpointing: true
+  log_every: 10
+  ckpt_every_steps: 50
+
+teacher_cache:
+  batch_size: 8
+  shard_rows: 500
+
+router:
+  beta: 0.7                          # weight on cosine sim; (1-beta) on the Markov prior
+  prototypes_per_domain: 200
+
+markov:
+  stickiness: 0.8
+  ema: 0.1
+
+eval:
+  mbpp_n: 50
+  gsm8k_n: 100
+  jump_trials: 200
+  jump_p95_target_ms: 45
+
+paths:
+  drive_root: /content/drive/MyDrive/chronostate
+  events: results/events.jsonl
